@@ -20,6 +20,7 @@ SEED = 42
 
 
 def set_seed(seed):
+  """Sets the random seed for random, numpy, torch, and action spaces."""
   random.seed(seed)
   np.random.seed(seed)
   torch.manual_seed(seed)
@@ -39,7 +40,7 @@ class Config:
   EPSILON_START = 1.0
   EPSILON_END = 0.01
   EPSILON_DECAY = 0.995
-  NUM_EPISODES = 300  # Adjust as needed for your training budget
+  NUM_EPISODES = 600  # Increased to 600 for robust convergence
   TARGET_UPDATE_FREQ = 10
 
 
@@ -47,8 +48,10 @@ class Config:
 # NEURAL NETWORK & AGENT (DQN & DDQN)
 # ==========================================
 class QNetwork(nn.Module):
+  """Neural network approximating action-value function Q(s, a)."""
 
   def __init__(self, state_dim, action_dim):
+    """Initializes the Q-network layers."""
     super(QNetwork, self).__init__()
     self.fc = nn.Sequential(
         nn.Linear(state_dim, 128),
@@ -59,12 +62,15 @@ class QNetwork(nn.Module):
     )
 
   def forward(self, x):
+    """Forward pass through the network returning Q-values for all actions."""
     return self.fc(x)
 
 
 class DQNAgent:
+  """DQN or Double DQN Agent handling policy execution and experience replay updates."""
 
   def __init__(self, state_dim, action_dim, is_ddqn=False):
+    """Initializes networks, optimizer, replay buffer, and configuration flags."""
     self.state_dim = state_dim
     self.action_dim = action_dim
     self.is_ddqn = is_ddqn
@@ -82,6 +88,7 @@ class DQNAgent:
     self.epsilon = Config.EPSILON_START
 
   def select_action(self, state, evaluate=False):
+    """Selects an action using an epsilon-greedy policy."""
     if not evaluate and random.random() < self.epsilon:
       return random.randrange(self.action_dim)
     with torch.no_grad():
@@ -90,9 +97,11 @@ class DQNAgent:
       return q_values.argmax().item()
 
   def push(self, transition):
+    """Pushes a new transition tuple into the replay buffer memory."""
     self.memory.append(transition)
 
   def sample(self, batch_size):
+    """Samples a random batch of transitions from the replay buffer memory."""
     batch = random.sample(self.memory, batch_size)
     states, actions, rewards, next_states, dones = zip(*batch)
     return (
@@ -104,6 +113,7 @@ class DQNAgent:
     )
 
   def update(self):
+    """Performs a gradient descent optimization step using Huber loss and gradient clipping."""
     if len(self.memory) < Config.MIN_REPLAY_SIZE:
       return
 
@@ -115,42 +125,45 @@ class DQNAgent:
 
     with torch.no_grad():
       if self.is_ddqn:
-        # Double DQN Target: Use online net to select action, target net to evaluate
         best_actions = self.policy_net(next_states).argmax(
             dim=1, keepdim=True
         )
         max_next_q = self.target_net(next_states).gather(1, best_actions)
       else:
-        # Standard DQN Target
         max_next_q = self.target_net(next_states).max(1, keepdim=True)[0]
 
       target_q = rewards + (Config.GAMMA * max_next_q * (1 - dones))
 
-    loss = nn.MSELoss()(current_q, target_q)
+    # Using Huber Loss (SmoothL1Loss) for improved training stability
+    loss = nn.SmoothL1Loss()(current_q, target_q)
     self.optimizer.zero_grad()
     loss.backward()
+    nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
     self.optimizer.step()
 
 
 # ==========================================
 # EVALUATION & METRIC LOGGING UTILITIES
 # ==========================================
-def get_validation_set(env, num_samples=50):
-  """Collects a fixed validation set of states to track Q-value evolution."""
+def get_shared_validation_set(num_samples=50):
+  """Collects a shared fixed validation set of states from the base environment for uniform Q-value tracking."""
+  base_env = gym.make(Config.ENV_NAME)
+  base_env.action_space.seed(SEED)
   val_states = []
-  state, _ = env.reset(seed=SEED)
+  state, _ = base_env.reset(seed=SEED)
   for _ in range(num_samples):
-    action = env.action_space.sample()
-    next_state, _, terminated, truncated, _ = env.step(action)
+    action = base_env.action_space.sample()
+    next_state, _, terminated, truncated, _ = base_env.step(action)
     val_states.append(state)
     state = next_state
     if terminated or truncated:
-      state, _ = env.reset()
+      state, _ = base_env.reset()
+  base_env.close()
   return torch.FloatTensor(np.array(val_states))
 
 
 def evaluate_q_values(agent, val_states):
-  """Computes average predicted Q-value over the fixed validation set."""
+  """Computes average predicted Q-value across the shared validation set."""
   agent.policy_net.eval()
   with torch.no_grad():
     states_t = val_states.to(agent.device)
@@ -160,8 +173,8 @@ def evaluate_q_values(agent, val_states):
   return avg_q
 
 
-def run_experiment(is_ddqn, use_wrapper):
-  """Runs a full training loop for a specific configuration (DQN/DDQN x Original/Modified)."""
+def run_experiment(is_ddqn, use_wrapper, shared_val_states):
+  """Executes full training for a specific configuration across the specified number of episodes."""
   exp_name = (
       f"{'DDQN' if is_ddqn else 'DQN'}_"
       f"{'Modified' if use_wrapper else 'Original'}"
@@ -170,8 +183,9 @@ def run_experiment(is_ddqn, use_wrapper):
 
   set_seed(SEED)
 
-  # Setup Environment
   base_env = gym.make(Config.ENV_NAME)
+  base_env.action_space.seed(SEED)
+
   if use_wrapper:
     env = StochasticActuatorFailureLunarLanderWrapper(
         base_env,
@@ -186,9 +200,6 @@ def run_experiment(is_ddqn, use_wrapper):
   action_dim = env.action_space.n
   agent = DQNAgent(state_dim, action_dim, is_ddqn=is_ddqn)
 
-  val_states = get_validation_set(env)
-
-  # Tracking metrics
   episode_rewards = []
   val_q_values = []
   success_moving_avg = []
@@ -202,7 +213,6 @@ def run_experiment(is_ddqn, use_wrapper):
     truncated = False
     total_reward = 0
     episode_thrusters = 0
-    episode_steps = 0
 
     while not (terminated or truncated):
       action = agent.select_action(state)
@@ -216,13 +226,10 @@ def run_experiment(is_ddqn, use_wrapper):
 
       state = next_state
       total_reward += reward
-      episode_steps += 1
 
-    # Check success condition using centralized function (for modified or standard landing check)
     if use_wrapper:
       is_success = is_valid_safe_landing(state, terminated, truncated)
     else:
-      # Standard original environment landing check criteria
       is_success = (
           terminated
           and abs(state[2]) < 0.1
@@ -239,15 +246,14 @@ def run_experiment(is_ddqn, use_wrapper):
     if (episode + 1) % Config.TARGET_UPDATE_FREQ == 0:
       agent.target_net.load_state_dict(agent.policy_net.state_dict())
 
-    # Record metrics per episode
     episode_rewards.append(total_reward)
-    val_q_values.append(evaluate_q_values(agent, val_states))
+    val_q_values.append(evaluate_q_values(agent, shared_val_states))
     success_moving_avg.append(
         np.mean(recent_successes) * 100.0 if recent_successes else 0.0
     )
     thruster_counts.append(episode_thrusters)
 
-    if (episode + 1) % 20 == 0:
+    if (episode + 1) % 50 == 0:
       print(
           f"Episode {episode+1}/{Config.NUM_EPISODES} | Reward:"
           f" {total_reward:.2f} | 100-Ep Success Rate:"
@@ -273,27 +279,24 @@ def plot_results(results):
 
   plt.figure(figsize=(14, 10))
 
-  # 1. Episode Reward vs Episode
   plt.subplot(2, 2, 1)
   for name, data in results.items():
-    plt.plot(epochs, data["rewards"], label=name, alpha=0.6)
+    plt.plot(epochs, data["rewards"], label=name, alpha=0.5)
   plt.title("Episode Reward vs Episode")
   plt.xlabel("Episode")
   plt.ylabel("Total Reward")
   plt.legend()
   plt.grid(True)
 
-  # 2. Average Predicted Q-value vs Episode
   plt.subplot(2, 2, 2)
   for name, data in results.items():
     plt.plot(epochs, data["q_values"], label=name)
-  plt.title("Avg Predicted Q-Value (Validation Set)")
+  plt.title("Avg Predicted Q-Value (Shared Validation Set)")
   plt.xlabel("Episode")
   plt.ylabel("Q-Value")
   plt.legend()
   plt.grid(True)
 
-  # 3. Successful Landing Rate (Moving Average over 100 episodes)
   plt.subplot(2, 2, 3)
   for name, data in results.items():
     plt.plot(epochs, data["success_rate"], label=name)
@@ -303,10 +306,9 @@ def plot_results(results):
   plt.legend()
   plt.grid(True)
 
-  # 4. Average Thruster Activations per Episode
   plt.subplot(2, 2, 4)
   for name, data in results.items():
-    plt.plot(epochs, data["thrusters"], label=name, alpha=0.5)
+    plt.plot(epochs, data["thrusters"], label=name, alpha=0.4)
   plt.title("Thruster Activations per Episode")
   plt.xlabel("Episode")
   plt.ylabel("Count")
@@ -320,22 +322,24 @@ def plot_results(results):
 
 
 def main():
+  """Main execution entry point running all four required experiments and generating plots."""
+  set_seed(SEED)
+  shared_val_states = get_shared_validation_set()
   results = {}
 
-  # Run all 4 required experiment combinations
-  # 1. Standard DQN on Original Environment
-  results["DQN - Original"] = run_experiment(is_ddqn=False, use_wrapper=False)
+  results["DQN - Original"] = run_experiment(
+      is_ddqn=False, use_wrapper=False, shared_val_states=shared_val_states
+  )
+  results["DQN - Modified"] = run_experiment(
+      is_ddqn=False, use_wrapper=True, shared_val_states=shared_val_states
+  )
+  results["DDQN - Original"] = run_experiment(
+      is_ddqn=True, use_wrapper=False, shared_val_states=shared_val_states
+  )
+  results["DDQN - Modified"] = run_experiment(
+      is_ddqn=True, use_wrapper=True, shared_val_states=shared_val_states
+  )
 
-  # 2. Standard DQN on Modified Environment
-  results["DQN - Modified"] = run_experiment(is_ddqn=False, use_wrapper=True)
-
-  # 3. Double DQN on Original Environment
-  results["DDQN - Original"] = run_experiment(is_ddqn=True, use_wrapper=False)
-
-  # 4. Double DQN on Modified Environment
-  results["DDQN - Modified"] = run_experiment(is_ddqn=True, use_wrapper=True)
-
-  # Generate required comparison plots
   plot_results(results)
 
 
