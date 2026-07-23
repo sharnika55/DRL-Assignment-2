@@ -33,8 +33,6 @@ class _LandingStub(gym.Env):
     obs[7] = 1.0  # right leg contact
     if not self.safe:
       obs[3] = 5.0  # large vertical velocity -> violates |v_vel| < 0.10
-      base_reward = 10.0, terminated = True, truncated = False
-      return obs, 10.0, True, False, {}
     return obs, 10.0, True, False, {}
 
 
