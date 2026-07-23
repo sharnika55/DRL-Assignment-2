@@ -2,269 +2,143 @@
 
 ## Deep Reinforcement Learning Assignment 2
 
-This project implements a modified **LunarLander-v3** environment using **Gymnasium** with:
+This project implements and evaluates a modified **LunarLander-v3** task using **Gymnasium**.
 
-- Stochastic actuator failures (15%)
-- Fuel consumption penalty
-- Safe landing reward bonus
-- DQN and Double DQN agents
-- Performance comparison plots
-- Wrapper verification script
+The assignment includes:
 
----
+- A custom environment wrapper with stochastic actuator failures
+- Fuel usage penalties for thruster actions
+- A strict safe-landing reward bonus
+- Training and comparison of **DQN** vs **Double DQN**
+- Automated verification of wrapper behavior
+- Performance visualization across experiments
 
-# Project Structure
+## Key Features
 
-```
+### Environment modifications
+
+- **15% actuator failure probability** on thruster actions
+- **Fuel penalty** of `0.3` for every thruster attempt
+- **Safe landing bonus** of `+50` when strict landing criteria are satisfied
+
+### Safe landing criteria
+
+A landing is considered safe only if all of the following are true at terminal state:
+
+- Both legs are in contact with the ground (`left_leg == 1` and `right_leg == 1`)
+- `abs(horizontal_velocity) < 0.10`
+- `abs(vertical_velocity) < 0.10`
+- `abs(orientation_angle) < 0.10`
+
+## Project Structure
+
+```text
 DRL-Assignment-2/
-│
-├── agents/
-│   ├── agents.py
-│   ├── network.py
-│   └── replay_buffer.py
-│
 ├── envs/
-│   └── stochastic_lander.py
-│
-├── utils/
-│   └── plotting.py
-│
+│   └── stochastic_lander.py      # Wrapper + safe-landing validation logic
 ├── results/
-│
-├── config.py
-├── train.py
-├── evaluate.py
-├── README.md
-└── requirements.txt
+│   └── plots/                    # Optional folder for storing plots
+├── train.py                      # Trains DQN/DDQN on original and modified envs
+├── evaluate.py                   # Verifies wrapper behavior (part a)
+└── README.md
 ```
 
----
+## Requirements
 
-# Prerequisites
+- Python `3.10` or later
+- `pip`
+- Recommended: virtual environment
 
-- Python 3.10 or later
-- pip
-- Virtual Environment (recommended)
+### Python dependencies
 
----
+- `gymnasium[box2d]`
+- `torch`
+- `numpy`
+- `matplotlib`
 
-# Create Virtual Environment
+## Setup
 
-Windows PowerShell
+### 1. Create and activate a virtual environment (Windows PowerShell)
 
 ```powershell
 python -m venv .venv
-```
-
-Activate virtual environment
-
-```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-You should see
+After activation, your prompt should start with `(.venv)`.
 
-```
-(.venv)
-```
-
-at the beginning of your terminal.
-
----
-
-# Install Dependencies
+### 2. Install dependencies
 
 ```powershell
-pip install -r requirements.txt
+pip install gymnasium[box2d] torch numpy matplotlib
 ```
 
-If requirements.txt is unavailable, install manually
+### 3. Verify installation
 
 ```powershell
-pip install gymnasium[box2d]
-pip install torch
-pip install numpy
-pip install matplotlib
+python -c "import gymnasium, torch, numpy, matplotlib"
 ```
 
----
+If no error is shown, setup is successful.
 
-# Verify Installation
+## How To Run
 
-```powershell
-python -c "import gymnasium, torch, numpy"
-```
-
-No errors indicate successful installation.
-
----
-
-# Run Training
-
-Train both DQN and Double DQN agents
+### Train all experiments
 
 ```powershell
 python train.py
 ```
 
-Training will:
+This runs four experiments:
 
-- Create the modified environment
-- Train DQN
-- Train Double DQN
-- Save rewards
-- Generate comparison plots
+- DQN - Original
+- DQN - Modified
+- DDQN - Original
+- DDQN - Modified
 
----
+During training, the script logs reward, success rate, thruster count, and epsilon progress.
 
-# Evaluate Trained Agents
+### Verify wrapper behavior
 
 ```powershell
 python evaluate.py
 ```
 
-This verifies
+This script validates:
 
-- Actuator failure rate
-- Fuel penalties
-- Safe landing bonus
+- Actuator failure rate is close to `0.15`
+- Fuel-penalty math is correct
+- Safe-landing bonus is applied only when criteria are met
 
-Expected output
+## Expected Evaluation Output (Example)
 
-```
+```text
 === Starting Comprehensive Wrapper Verification ===
-
---- Verification Results ---
-
-1. Actuator Failure Rate: 0.1498
--> PASSED
-
-2. Fuel Penalties Counted: xxxx / xxxx
--> PASSED
-
-3. Safe Landings Detected: x
-Independent Bonuses Verified: x
--> PASSED
-
+1. Actuator Failure Rate: 0.1498 (Expected ~0.15)
+	-> PASSED
+2. Fuel penalty (0.3) correct on NNNN/NNNN thruster steps; reward algebra correct on MMMM/MMMM steps
+	-> PASSED
+3. Safe landing reward = 59.70 (expected 59.70); unsafe landing reward = 10.00 (expected 10.00)
+	-> PASSED
 === Verification Script Completed ===
 ```
 
-(The exact values will vary due to randomness.)
+Exact values may vary due to randomness.
 
----
+## Output Artifacts
 
-# Generated Results
+After training, one comparison figure is generated:
 
-After training, the following plot is generated.
+- `experiment_comparison_plots.png`
 
-```
-assignment_performance_comparison.png
-```
+The figure includes four subplots:
 
-This figure compares
+- Episode reward vs episode
+- Average predicted Q-value on a shared validation set
+- 100-episode moving average success rate (%)
+- Thruster activations per episode
 
-- DQN rewards
-- Double DQN rewards
-- Training performance
-- Learning trends
+## Notes
 
----
-
-# Features Implemented
-
-### Environment Modifications
-
-✔ 15% stochastic actuator failure
-
-✔ Fuel penalty for every thruster action
-
-✔ Safe landing bonus (+50 reward)
-
-### Safe Landing Conditions
-
-A landing is considered safe when
-
-- Episode terminates successfully
-- Not truncated
-- Both landing legs touch the surface
-- Horizontal velocity ≤ 0.10
-- Vertical velocity ≤ 0.10
-- Orientation angle ≤ 0.10 radians
-
----
-
-# Wrapper Verification
-
-The verification script checks
-
-- Correct actuator failure probability
-- Fuel penalty application
-- Safe landing detection
-- Landing reward bonus
-- Requested vs executed actions
-
----
-
-# Expected Output Files
-
-```
-assignment_performance_comparison.png
-```
-
-Additional model files may be generated depending on training configuration.
-
----
-
-# Useful Commands
-
-Activate virtual environment
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-Install packages
-
-```powershell
-pip install -r requirements.txt
-```
-
-Train agents
-
-```powershell
-python train.py
-```
-
-Evaluate wrapper
-
-```powershell
-python evaluate.py
-```
-
-Check installed packages
-
-```powershell
-pip list
-```
-
-Deactivate virtual environment
-
-```powershell
-deactivate
-```
-
----
-
-# Technologies Used
-
-- Python
-- Gymnasium
-- NumPy
-- PyTorch
-- Matplotlib
-
----
-
-# Author
-
-K. Sharnika
+- The wrapper does **not** expose environment modifications through the returned `info` dictionary.
+- Debug values used for verification are stored internally in the wrapper instance.
