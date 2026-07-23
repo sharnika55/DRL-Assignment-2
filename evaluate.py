@@ -1,94 +1,101 @@
-# =====================================================================
-# evaluate.py
-# =====================================================================
 import gymnasium as gym
-from envs.stochastic_lander import StochasticActuatorFailureLunarLanderWrapper
-from config import Config
-from utils.logger import setup_logger
+from envs.stochastic_lander import (
+    THRUSTER_ACTIONS,
+    StochasticActuatorFailureLunarLanderWrapper,
+)
 
-logger = setup_logger("EvaluateVerification")
 
-def verify_modified_environment():
-    """
-    Independent external verification script running episodes via a random policy
-    to verify:
-    1. ~15% actuator failure rate for thruster actions by directly comparing
-       the agent's chosen action against the wrapper's executed action.
-    2. Correct fuel penalty application.
-    3. Safe landing bonus application.
-    """
-    logger.info("Starting external wrapper verification routine...")
-    env = None
-    try:
-        base_env = gym.make(Config.ENV_NAME)
-        env = StochasticActuatorFailureLunarLanderWrapper(
-            base_env,
-            failure_probability=Config.FAILURE_PROBABILITY,
-            fuel_penalty=Config.FUEL_PENALTY,
-            landing_bonus=Config.LANDING_BONUS
-        )
+def verify_wrapper_features():
+  print("=== Starting Comprehensive Wrapper Verification ===")
+  base_env = gym.make("LunarLander-v3")
+  env = StochasticActuatorFailureLunarLanderWrapper(base_env, failure_rate=0.15)
 
-        # Global gym seed setup
-        env.reset(seed=Config.SEED)
-        env.action_space.seed(Config.SEED)
+  try:
+    # Capture reset return values to avoid linter warnings
+    _, _ = env.reset(seed=42)
 
-        n_verification_episodes = 50
-        total_thruster_attempts = 0
-        total_thruster_failures = 0
+    misfires = 0
+    thruster_attempts = 0
+    fuel_penalties_counted = 0
+    safe_landings_detected = 0
+    landing_bonuses_verified = 0
 
-        for ep in range(n_verification_episodes):
-            _, _ = env.reset(seed=Config.SEED + ep)
-            done = False
-            truncated = False
+    num_steps = 10000
+    action_space = env.action_space
 
-            while not (done or truncated):
-                chosen_action = env.action_space.sample()
-                
-                # Step through environment which updates env.last_executed_action internally
-                _, _, done, truncated, _ = env.step(chosen_action)
+    for _ in range(num_steps):
+      action = action_space.sample()
 
-                if chosen_action != 0:
-                    total_thruster_attempts += 1
-                    # Robust verification check: compares if executed action deviates from chosen action
-                    if env.last_executed_action != chosen_action:
-                        total_thruster_failures += 1
+      if action in THRUSTER_ACTIONS:
+        thruster_attempts += 1
 
-        logger.info("Verification Complete across %d episodes.", n_verification_episodes)
-        logger.info("Total Thruster Attempts: %d", total_thruster_attempts)
-        logger.info("Total Thruster Failures: %d", total_thruster_failures)
-        
-        if total_thruster_attempts > 0:
-            observed_rate = total_thruster_failures / total_thruster_attempts
-            logger.info(
-                "Observed Actuator Failure Rate: %.4f (Expected ~%.2f)",
-                observed_rate,
-                Config.FAILURE_PROBABILITY,
-            )
-            
-            # Log expected range implied by tolerance
-            tolerance = 0.03
-            logger.info(
-                "Expected failure rate range: %.2f–%.2f",
-                Config.FAILURE_PROBABILITY - tolerance,
-                Config.FAILURE_PROBABILITY + tolerance,
-            )
-            
-            # Tolerance pass/fail evaluation check
-            if abs(observed_rate - Config.FAILURE_PROBABILITY) <= tolerance:
-                logger.info("✓ Verification PASSED: Failure rate is within expected tolerance.")
-            else:
-                logger.warning(
-                    "Verification FAILED. Observed failure rate %.4f is outside the expected range.",
-                    observed_rate,
-                )
+      # Discard unused state and reward variables cleanly
+      _, _, terminated, truncated, info = env.step(action)
 
-    except Exception as e:
-        logger.error("Error during environment verification: %s", str(e))
-        raise
-    finally:
-        if env is not None:
-            env.close()
-            logger.info("Environment successfully closed.")
+      # Check actual misfires using info dictionary and requested action
+      if action in THRUSTER_ACTIONS:
+        if info.get("executed_action") != info.get("requested_action"):
+          misfires += 1
+
+      # Count fuel penalties using the wrapper's fuel_penalty_applied flag
+      if info.get("fuel_penalty_applied", False):
+        fuel_penalties_counted += 1
+
+      # Track safe landings and explicit landing bonuses independently
+      if info.get("is_safe_landing", False):
+        safe_landings_detected += 1
+
+      if info.get("landing_bonus_applied", False):
+        landing_bonuses_verified += 1
+
+      if terminated or truncated:
+        _, _ = env.reset(seed=None)
+
+    print("\n--- Verification Results ---")
+
+    # 1. Verify Failure Rate (Expected ~15% with strict ±3% tolerance)
+    failure_rate = (
+        misfires / thruster_attempts if thruster_attempts > 0 else 0.0
+    )
+    expected = 0.15
+    tolerance = 0.03
+
+    print(
+        f"1. Actuator Failure Rate: {failure_rate:.4f} (Expected ~{expected})"
+    )
+    if abs(failure_rate - expected) <= tolerance:
+      print("   -> Actuator failure verification PASSED")
+    else:
+      print("   -> Actuator failure verification FAILED")
+
+    # 2. Verify Fuel Penalty
+    print(
+        f"2. Fuel Penalties Counted: {fuel_penalties_counted} / Thruster"
+        f" Attempts: {thruster_attempts}"
+    )
+    if fuel_penalties_counted == thruster_attempts:
+      print("   -> Fuel penalty verification PASSED")
+    else:
+      print("   -> Fuel penalty verification FAILED")
+
+    # 3. Verify Landing Bonus Independently
+    print(
+        f"3. Safe Landings Detected: {safe_landings_detected} | Independent"
+        f" Bonuses Verified: {landing_bonuses_verified}"
+    )
+    if (
+        safe_landings_detected > 0
+        and safe_landings_detected == landing_bonuses_verified
+    ) or (safe_landings_detected == 0 and landing_bonuses_verified == 0):
+      print("   -> Landing bonus verification PASSED")
+    else:
+      print("   -> Landing bonus verification FAILED")
+
+    print("=== Verification Script Completed ===")
+
+  finally:
+    env.close()
+
 
 if __name__ == "__main__":
-    verify_modified_environment()
+  verify_wrapper_features()

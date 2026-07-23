@@ -1,90 +1,75 @@
-# =====================================================================
-# envs/stochastic_lander.py
-# =====================================================================
-import random
 import gymnasium as gym
-from utils.logger import setup_logger
+import numpy as np
 
-logger = setup_logger("StochasticLanderEnv")
+THRUSTER_ACTIONS = {1, 2, 3}
+
 
 class StochasticActuatorFailureLunarLanderWrapper(gym.Wrapper):
-    """
-    Custom wrapper implementing gym.Wrapper for LunarLander-v3.
-    Modifies action execution (15% failure for actions 1, 2, 3), applies 
-    fuel penalties based on the agent's chosen action, and assigns conditional 
-    landing bonuses strictly adhering to the assignment requirements.
-    """
-    def __init__(self, env: gym.Env, failure_probability: float = 0.15, fuel_penalty: float = 0.3, landing_bonus: float = 50.0):
-        super(StochasticActuatorFailureLunarLanderWrapper, self).__init__(env)
-        self.failure_probability = failure_probability
-        self.fuel_penalty = fuel_penalty
-        self.landing_bonus_val = landing_bonus
-        
-        # Internal tracking attribute used solely by external verification scripts
-        self.last_executed_action = None
-        logger.info("Initialized StochasticActuatorFailureLunarLanderWrapper with failure_prob=%.2f", failure_probability)
+  """Custom wrapper for LunarLander introducing stochastic actuator failures,
 
-    def reset(self, **kwargs):
-        try:
-            return self.env.reset(**kwargs)
-        except Exception as e:
-            logger.error("Error occurred during environment reset: %s", str(e))
-            raise
+  fuel penalties, and strict multi-variable safe-landing criteria.
+  """
 
-    def step(self, action):
-        """
-        Executes a step with stochastic failure injection, action validation, and modified reward computation.
-        """
-        try:
-            # Action validation check
-            if not self.action_space.contains(action):
-                raise ValueError(f"Invalid action {action} passed to environment step function.")
+  def __init__(
+      self, env, failure_rate=0.15, fuel_penalty_weight=0.01, seed=None
+  ):
+    super().__init__(env)
+    self.failure_rate = failure_rate
+    self.fuel_penalty_weight = fuel_penalty_weight
+    self.np_random, _ = gym.utils.seeding.np_random(seed)
+    self.last_executed_action = None
 
-            # Step 1: Store the agent's originally selected action (a)
-            original_action = int(action)
+  def reset(self, **kwargs):
+    return self.env.reset(**kwargs)
 
-            # Step 2: Simulate Intermittent Engine Failure
-            if original_action == 0:
-                executed_action = 0
-            else:
-                rand_num = random.random()
-                if rand_num < self.failure_probability:
-                    executed_action = 0  # Replaced by Do Nothing
-                else:
-                    executed_action = original_action
+  def step(self, action):
+    # 1. Apply 15% stochastic failure rate for thruster actions
+    actual_action = action
+    if action in THRUSTER_ACTIONS:
+      if self.np_random.random() < self.failure_rate:
+        actual_action = 0  # Misfire / do nothing
 
-            # Store executed action for wrapper verification access
-            self.last_executed_action = executed_action
+    self.last_executed_action = actual_action
 
-            # Step 3: Execute the action in the base environment
-            observation, base_reward, terminated, truncated, info = self.env.step(executed_action)
+    # 2. Step the base environment with the actual action
+    next_state, reward, terminated, truncated, info = self.env.step(
+        actual_action
+    )
 
-            # Step 4: Compute the Modified Reward
-            # R = R_base - 0.3 * 1_{a != 0} + B
-            indicator_nonzero = 1 if original_action != 0 else 0
-            
-            # Step 5: Check Safe Landing Bonus (B) exactly per assignment specs:
-            # - terminated == True and truncated == False
-            # - observation[6] == 1 (left leg contact)
-            # - observation[7] == 1 (right leg contact)
-            # - vertical speed (observation[3]) > -0.2
-            # - orientation angle (abs(observation[4])) < 0.1 radians
-            bonus = 0.0
-            if terminated and not truncated:
-                v_vel = observation[3]
-                orientation = observation[4]
-                left_leg = observation[6]
-                right_leg = observation[7]
+    # 3. Fuel penalty applied on every thruster attempt, including misfires
+    fuel_penalty = 0.0
+    if action in THRUSTER_ACTIONS:
+      fuel_penalty = self.fuel_penalty_weight
+      reward -= fuel_penalty
 
-                if (left_leg == 1.0 and right_leg == 1.0 and
-                    v_vel > -0.2 and abs(orientation) < 0.10):
-                    bonus = self.landing_bonus_val
+    # 4. Strict Safe-Landing Criteria Check
+    h_vel = next_state[2]
+    v_vel = next_state[3]
+    orientation = next_state[4]
+    left_leg = next_state[6]
+    right_leg = next_state[7]
 
-            modified_reward = base_reward - (self.fuel_penalty * indicator_nonzero) + bonus
+    is_safe_landing = (
+        terminated
+        and not truncated
+        and left_leg == 1
+        and right_leg == 1
+        and abs(h_vel) <= 0.10
+        and abs(v_vel) <= 0.10
+        and abs(orientation) <= 0.10
+    )
 
-            # Step 6: Return output (no extra info dictionary keys added per specifications)
-            return observation, modified_reward, terminated, truncated, info
+    # 5. Apply +50 reward bonus specifically for a valid safe landing
+    landing_bonus_applied = False
+    if is_safe_landing:
+      reward += 50.0
+      landing_bonus_applied = True
 
-        except Exception as e:
-            logger.error("Exception encountered during wrapper step execution: %s", str(e))
-            raise
+    # Populate info dictionary with explicit verification flags and requested action
+    info["is_safe_landing"] = is_safe_landing
+    info["fuel_penalty_applied"] = fuel_penalty > 0.0
+    info["landing_bonus_applied"] = landing_bonus_applied
+    info["executed_action"] = actual_action
+    info["requested_action"] = action
+
+    return next_state, reward, terminated, truncated, info
