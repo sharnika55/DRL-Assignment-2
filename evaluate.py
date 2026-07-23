@@ -7,7 +7,6 @@ from envs.stochastic_lander import (
 
 
 def verify_wrapper_features():
-  """Independently verifies the stochastic wrapper's failure rate, fuel penalty deduction, and landing bonus logic."""
   print("=== Starting Comprehensive Wrapper Verification ===")
   base_env = gym.make("LunarLander-v3")
   env = StochasticActuatorFailureLunarLanderWrapper(
@@ -32,8 +31,10 @@ def verify_wrapper_features():
       if action in THRUSTER_ACTIONS:
         thruster_attempts += 1
 
+      # Unpack only the needed variables cleanly, ignoring unused ones
       next_state, _, terminated, truncated, _ = env.step(action)
 
+      # Check actual misfires using internal wrapper attribute without leaking info
       if action in THRUSTER_ACTIONS:
         if env.last_executed_action != action:
           misfires += 1
@@ -41,6 +42,7 @@ def verify_wrapper_features():
       if action in THRUSTER_ACTIONS:
         fuel_penalties_counted += 1
 
+      # Evaluate safe landing independently using the imported shared function
       if is_valid_safe_landing(next_state, terminated, truncated):
         safe_landings_detected += 1
         landing_bonuses_verified += 1
@@ -50,6 +52,7 @@ def verify_wrapper_features():
 
     print("\n--- Verification Results ---")
 
+    # 1. Verify Failure Rate (~15% with ±3% tolerance)
     failure_rate = (
         misfires / thruster_attempts if thruster_attempts > 0 else 0.0
     )
@@ -64,6 +67,7 @@ def verify_wrapper_features():
     else:
       print("   -> Actuator failure verification FAILED")
 
+    # 2. Verify Fuel Penalty (0.3 weight)
     print(
         f"2. Fuel Penalties Counted: {fuel_penalties_counted} / Thruster"
         f" Attempts: {thruster_attempts}"
@@ -73,6 +77,7 @@ def verify_wrapper_features():
     else:
       print("   -> Fuel penalty verification FAILED")
 
+    # 3. Verify Landing Bonus
     print(
         f"3. Safe Landings Detected: {safe_landings_detected} | Bonuses"
         f" Verified: {landing_bonuses_verified}"
