@@ -40,7 +40,7 @@ class Config:
   EPSILON_START = 1.0
   EPSILON_END = 0.01
   EPSILON_DECAY = 0.995
-  NUM_EPISODES = 600  # Increased to 600 for robust convergence
+  NUM_EPISODES = 800  
   TARGET_UPDATE_FREQ = 10
 
 
